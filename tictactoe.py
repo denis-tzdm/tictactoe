@@ -1,11 +1,16 @@
+FIELD_SIZE = 3  # размер поля
+WIN_SEQ_LEN = 3  # длина выигрышной последовательности
 # соответствие значений списка (поля игры) и символов на экране
 SYMBOLS = {0: ' ', 1: '×', 2: 'o'}
-FIELD_SIZE = 3  # размер поля
 # варианты исхода игры
 OUTCOMES = {1: 'игрок 1', 2: 'игрок 2', 3: 'ничья', 4: 'партия прервана'}
 STOP_WORD = '0'  # стоп-слово для прерывания партии
 STOP_CODE = 4  # код возврата при прерывании партии
 DRAW_CODE = 3  # код возврата ничьей
+
+# смещение координат на 1 меньше выигрышной последовательности,
+# потому что она включает текущий ход
+OFFSET = WIN_SEQ_LEN - 1
 
 
 def show_field(field):
@@ -30,26 +35,62 @@ def show_cells_filling(char):
     print()
 
 
+def get_line_range(ind: int) -> range:
+    """Получить диапазон координаты для горизонтальной или вертикальной линии
+
+    Одна из координат вертикальной или горизонтальной линии,
+    построенной относительно переданной точки,
+    в которой может быть выигрышная последовательность.
+    """
+    return range(
+        max(0, ind - OFFSET),  # не меньше 0
+        min(FIELD_SIZE - 1, ind + OFFSET) + 1  # и в переделах поля
+    )
+
+
+def get_diag_points(field: list,
+                    row: int,
+                    col: int,
+                    y_factor: 1 | -1) -> list:
+    """Получить точки диагонали для проверки победы.
+
+    Точки диагональной линии от заданной позиции, в которой
+    может быть выигрышная последовательность.
+    """
+    # для диагонали проверяем обе координаты,
+    # ни одна не должна выходить за пределы поля
+    # для обратной диагонали движение по вертикали
+    # противоположно по знаку движению по горизонтали
+    return [field[row + y_factor * ind][col + ind]
+            for ind in range(-OFFSET, OFFSET + 1)
+            if (0 <= row + y_factor * ind <= FIELD_SIZE - 1
+                and 0 <= col + ind <= FIELD_SIZE - 1)]
+
+
 def check_is_over(field, point):
     # проверяем только линии, в которых задействована новая точка
     row = point[0]
     col = point[1]
-    # линии по горизонтали или по вертикали
-    if len(set(field[row])) == 1 or \
-            len(set(row[col] for row in field)) == 1:
-        return field[row][col]
 
-    # линии по диагонали
-    # 1 1 -> 3 3
-    # если обе координаты точки одинаковые
-    if row == col:
-        if len(set(field[ind][ind] for ind in range(FIELD_SIZE))) == 1:
-            return field[row][col]
-    # 1 3 -> 3 1
-    # если размер поля минус первая координата точки равна второй координате
-    # -1, т. к. считаем от 0
-    if FIELD_SIZE - row - 1 == col:
-        if len(set(field[FIELD_SIZE - ind - 1][ind] for ind in range(FIELD_SIZE))) == 1:
+    # возможные победные последовательности -- N одинаковых элементов подряд
+    # в координатах ±(N-1) точки от текущей по горизонтали, вертикали, диагонали
+    check_cells = [
+        [field[row][ind] for ind in get_line_range(col)],  # горизонталь
+        [field[ind][col] for ind in get_line_range(row)],  # вертикаль
+        get_diag_points(field, row, col, 1),  # диагональ \
+        get_diag_points(field, row, col, -1)  # диагональ /
+    ]
+
+    # проверяем линии срезами, равными длине выигрышной последовательности
+    # если в срезе все значения одинаковые, значит, текущий игрок победил
+    for seq in check_cells:
+        seq_len = len(seq)
+        if seq_len < WIN_SEQ_LEN:
+            continue
+        if any(
+                len(set(seq[ind:ind + WIN_SEQ_LEN])) == 1
+                for ind in range(seq_len - WIN_SEQ_LEN + 1)
+        ):
             return field[row][col]
 
     # не осталось ходов
@@ -67,15 +108,15 @@ def validate_input(move, field):
         return None
 
     # если одно из введённых значений состоит не только из цифр
-    if not all(map(lambda x: x.isdigit(), move_list)):
+    if not all(map(str.isdigit, move_list)):
         return None
 
-    # если одно из значений меньше 1 или больше размера поля
-    if not all(map(lambda x: 1 <= int(x) <= FIELD_SIZE, move_list)):
-        return None
+    # координаты
+    col, row = map(lambda x: int(x) - 1, move_list)
 
-    # иначе координаты
-    col, row = list(map(lambda x: int(x) - 1, move_list))
+    # если одно из значений вне поля
+    if not all(map(lambda x: 0 <= x <= FIELD_SIZE - 1, [col, row])):
+        return None
 
     # точка уже занята
     if field[row][col]:
@@ -97,7 +138,7 @@ def game():
             print("Неверный ввод :-(")
 
         print(f'{OUTCOMES[current_player].capitalize()}, Ваш ход.')
-        move = input('Введите координаты в виде "колонка строка"'
+        move = input('Введите координаты в виде "x y"'
                      f' или "{STOP_WORD}" для прерывания партии: ')
         if move.lower() == STOP_WORD.lower():
             return STOP_CODE
@@ -108,6 +149,7 @@ def game():
             field[point[0]][point[1]] = current_player
             code_over = check_is_over(field, point)
             if code_over:
+                show_field(field)
                 return code_over
             current_player = 2 if current_player == 1 else 1
 
